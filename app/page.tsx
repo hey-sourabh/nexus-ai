@@ -1,71 +1,98 @@
 'use client';
-import { useChat } from '@ai-sdk/react';
-import { useState } from 'react';
 
-export default function Chat() {
+import { useChat } from '@ai-sdk/react';
+import { useState, useRef, useEffect } from 'react';
+import { ChatStatus } from './components/types';
+import ChatHeader from './components/ChatHeader';
+import MessageBubble from './components/MessageBubble';
+import ChatInput from './components/ChatInput';
+
+
+function EmptyState() {
+  return (
+    <div className="flex flex-col items-center justify-center h-full gap-3 select-none">
+      <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-100 to-violet-100 flex items-center justify-center text-3xl shadow-inner">
+        🌤️
+      </div>
+      <p className="text-zinc-400 text-sm font-medium text-center max-w-xs">
+        Ask about the weather in any city and Nexus AI will fetch it for you.
+      </p>
+    </div>
+  );
+}
+
+// ─── Thinking Indicator ────────────────────────────────────────────────────────
+
+function ThinkingIndicator() {
+  return (
+    <div className="flex justify-start">
+      <div className="flex items-center gap-2 bg-white border border-zinc-100 shadow-sm px-4 py-3 rounded-2xl rounded-tl-sm">
+        <span className="text-xs font-semibold tracking-widest uppercase text-indigo-400">
+          Nexus AI
+        </span>
+        <div className="flex gap-1 ml-1">
+          {[0, 150, 300].map((delay) => (
+            <span
+              key={delay}
+              className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce"
+              style={{ animationDelay: `${delay}ms` }}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Chat Page ─────────────────────────────────────────────────────────────────
+
+export default function ChatPage() {
   const { messages, sendMessage, status } = useChat();
   const [input, setInput] = useState('');
+  const bottomRef = useRef<HTMLDivElement>(null);
 
-  const isLoading = status === 'streaming' || status === 'submitted';
+  const isLoading =
+    status === ChatStatus.Streaming || status === ChatStatus.Submitted;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
-    
-    // 'role' aur 'content' hata kar sirf 'text' pass karein
-    sendMessage({ text: input }); 
+    sendMessage({ text: input });
     setInput('');
   };
 
+  // Auto-scroll to bottom on new messages
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, isLoading]);
+
   return (
-    <div className="flex flex-col h-screen max-w-2xl mx-auto p-6 font-sans">
-      <header className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Nexus AI</h1>
-        <p className="text-sm text-gray-500">Streaming UI with Vercel AI SDK</p>
-      </header>
+    <main className="min-h-screen bg-zinc-100 flex items-center justify-center p-4 sm:p-8">
+      <div className="w-full max-w-2xl flex flex-col shadow-2xl rounded-2xl overflow-hidden border border-zinc-200 bg-white">
+        {/* Header */}
+        <ChatHeader />
 
-      <div className="flex-1 overflow-y-auto space-y-4 mb-6 p-4 border rounded-xl bg-gray-50 shadow-sm">
-        {messages.length === 0 && (
-          <p className="text-gray-400 text-center mt-20">Start a conversation with Nexus AI...</p>
-        )}
-        
-        {messages.map((m) => (
-          <div 
-            key={m.id} 
-            className={`p-4 rounded-xl max-w-[85%] ${
-              m.role === 'user' 
-                ? 'bg-black text-white ml-auto rounded-tr-none' 
-                : 'bg-white border text-gray-800 mr-auto rounded-tl-none shadow-sm'
-            }`}
-          >
-            <strong className="block text-xs opacity-60 mb-1">
-              {m.role === 'user' ? 'You' : 'Nexus AI'}
-            </strong>
-            {/* m.content ko is block se replace karein */}
-  {m.parts.map((part, index) => (
-    part.type === 'text' ? <span key={index}>{part.text}</span> : null
-  ))}
-          </div>
-        ))}
-        {isLoading && <div className="text-sm text-gray-500 animate-pulse ml-2">Thinking...</div>}
-      </div>
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto min-h-[420px] max-h-[60vh] p-5 space-y-4 bg-zinc-50">
+          {messages.length === 0 ? (
+            <EmptyState />
+          ) : (
+            messages.map((m) => (
+              <MessageBubble key={m.id} message={m as never} />
+            ))
+          )}
+          {isLoading && <ThinkingIndicator />}
+          <div ref={bottomRef} />
+        </div>
 
-      <form onSubmit={handleSubmit} className="flex gap-2">
-        <input
+        {/* Input */}
+        <ChatInput
           value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask me anything..."
-          className="flex-1 border border-gray-300 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-black"
+          onChange={setInput}
+          onSubmit={handleSubmit}
           disabled={isLoading}
         />
-        <button 
-          type="submit" 
-          disabled={isLoading || !input.trim()}
-          className="bg-black text-white px-6 py-3 rounded-lg hover:bg-gray-800 disabled:opacity-50 transition-all font-medium"
-        >
-          Send
-        </button>
-      </form>
-    </div>
+      </div>
+    </main>
   );
 }
