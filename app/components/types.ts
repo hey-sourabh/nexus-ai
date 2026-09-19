@@ -27,8 +27,13 @@ export enum ToolPartType {
 
 export interface WeatherOutput {
   location: string;
+  country: string;
   condition: WeatherCondition | string;
-  temperature: number;
+  temperature: number;      // °C current
+  feelsLike: number;        // °C apparent
+  humidity: number;         // %
+  windSpeed: number;        // km/h
+  timezone: string;
 }
 
 export interface WeatherInput {

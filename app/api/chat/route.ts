@@ -1,36 +1,46 @@
 import { streamText, convertToModelMessages, tool } from 'ai';
 import { google } from '@ai-sdk/google';
 import { z } from 'zod';
+import { geocode, fetchWeather, wmoToCondition, wmoToDescription } from '../../utils/weather';
 
-export const maxDuration = 30;
+export const maxDuration = 30
 
 export async function POST(req: Request) {
   const { messages } = await req.json();
 
   const result = streamText({
-    model: google('gemini-3.6-flash'),
+    model: google('gemini-3.5-flash'),
     messages: await convertToModelMessages(messages),
-    system: "You are Nexus. If the user asks for the weather, always use the 'getWeather' tool.",
-    
-    // Tools object jahan hum AI ko external functions connect karne ki power dete hain
+    system:
+      "You are Nexus, a helpful AI assistant. When the user asks about the weather for any city, always use the 'getWeather' tool to fetch real-time data. Never guess or make up weather information.",
+
     tools: {
       getWeather: tool({
-        description: 'Get the current weather for a specific location',
-        // AI SDK me input schema define karne ke liye 'inputSchema' use hota hai
+        description: 'Get the real-time current weather for a specific city using Open-Meteo.',
         inputSchema: z.object({
-          location: z.string().describe('The city name'),
-          temperature: z.number().optional().describe('Random temperature between 10 and 40'),
-          condition: z.enum(['Sunny', 'Rainy', 'Cloudy', 'Snow']).optional().describe('Random weather condition'),
+          location: z.string().describe('The city name to get weather for'),
         }),
-        // Execute function tab run hota hai jab AI is tool ko call karta hai
-        execute: async ({ location, temperature, condition }) => {
-          // Real-world me aap yahan kisi weather API (jaise OpenWeather) ko fetch karenge
-          // Abhi ke liye hum mock data return kar rahe hain
-          await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate API delay
-          return { 
-            location, 
-            temperature: temperature ?? Math.floor(Math.random() * 30) + 10, 
-            condition: condition ?? 'Sunny' 
+
+        execute: async ({ location }) => {
+          // 1. Geocode the city name to coordinates
+          const geo = await geocode(location);
+
+          // 2. Fetch real current weather
+          const weather = await fetchWeather(geo.latitude, geo.longitude, geo.timezone);
+
+          // 3. Map WMO code to our condition enum
+          const condition = wmoToCondition(weather.weather_code);
+
+          return {
+            location: geo.name,
+            country: geo.country,
+            condition,
+            description: wmoToDescription(weather.weather_code),
+            temperature: Math.round(weather.temperature_2m),
+            feelsLike: Math.round(weather.apparent_temperature),
+            humidity: weather.relative_humidity_2m,
+            windSpeed: Math.round(weather.wind_speed_10m),
+            timezone: geo.timezone,
           };
         },
       }),
