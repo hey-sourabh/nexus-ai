@@ -1,66 +1,18 @@
-import {
-  streamText,
-  convertToModelMessages,
-  tool,
-  embed,
-  embedMany,
-  cosineSimilarity,
-  type UIMessage,
-} from 'ai';
+import { streamText, convertToModelMessages, tool, embed, type UIMessage } from 'ai';
 import { google } from '@ai-sdk/google';
 import { z } from 'zod';
 import { geocode, fetchWeather, wmoToCondition, wmoToDescription } from '../../utils/weather';
+import { supabase } from '../../lib/supabase'; // Hamara Supabase client
 
 export const maxDuration = 30;
 
-// ==========================================
-// 1. RAG: Knowledge Base (demo only)
-// ==========================================
-// NOTE: never put secrets (passwords, keys) here. Anyone who can chat
-// can retrieve anything in this list.
-const knowledgeBase = [
-  'Nexus AI is a next-generation startup founded in 2026.',
-  'The CEO and Lead Engineer of Nexus AI is Sourabh Sharma.',
-  "Nexus AI's core tech stack includes Next.js, TypeScript, and Vercel AI SDK.",
-  'Our head office is located in Indore, Madhya Pradesh.',
-  "CEO lives in indore , Madhya Pradesh, India"
-];
-
 const embeddingModel = google.textEmbeddingModel('gemini-embedding-001');
 
-const TOP_K = 3;
-const MIN_SCORE = 0.4; // tune this by logging real scores
-
-// ==========================================
-// 2. Embed the knowledge base ONCE per server instance
-// ==========================================
-let kbEmbeddingsPromise: Promise<number[][]> | null = null;
-
-function getKnowledgeBaseEmbeddings() {
-  if (!kbEmbeddingsPromise) {
-    kbEmbeddingsPromise = embedMany({
-      model: embeddingModel,
-      values: knowledgeBase,
-      providerOptions: { google: { taskType: 'RETRIEVAL_DOCUMENT' } },
-    })
-      .then((r) => r.embeddings)
-      .catch((err) => {
-        kbEmbeddingsPromise = null; // allow retry on next request
-        throw err;
-      });
-  }
-  return kbEmbeddingsPromise;
-}
-
-// ==========================================
-// 3. Helpers
-// ==========================================
+// Helpers for multi-turn context
 function getMessageText(message: UIMessage): string {
   return message.parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
 }
 
-// Use the last 2 user messages so follow-ups like "what's his role?" still have context.
-// (A more advanced approach: ask an LLM to rewrite the question as a standalone query.)
 function buildSearchQuery(messages: UIMessage[]): string {
   return messages
     .filter((m) => m.role === 'user')
@@ -70,43 +22,49 @@ function buildSearchQuery(messages: UIMessage[]): string {
     .trim();
 }
 
+// ==========================================
+// RAG: Query Supabase Vector Database
+// ==========================================
 async function retrieveContext(query: string) {
   if (!query) return [];
 
-  const [kbEmbeddings, { embedding: queryEmbedding }] = await Promise.all([
-    getKnowledgeBaseEmbeddings(),
-    embed({
-      model: embeddingModel,
-      value: query,
-      providerOptions: { google: { taskType: 'RETRIEVAL_QUERY' } },
-    }),
-  ]);
+  // 1. User ki query ko vectors (3072 dimensions) me convert karna
+  const { embedding: queryEmbedding } = await embed({
+    model: embeddingModel,
+    value: query,
+  });
 
-  return kbEmbeddings
-    .map((vector, i) => ({
-      text: knowledgeBase[i],
-      score: cosineSimilarity(queryEmbedding, vector),
-    }))
-    .filter((r) => r.score > MIN_SCORE)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, TOP_K);
+  // 2. Supabase function ('match_documents') call karna Vector Search ke liye
+  const { data: documents, error } = await supabase.rpc('match_documents', {
+    query_embedding: queryEmbedding,
+    match_threshold: 0.4, // Kam se kam 40% match hona chahiye
+    match_count: 3,       // Top 3 results chahiye
+  });
+
+  if (error) {
+    console.error("Supabase RAG Error:", error);
+    return [];
+  }
+
+  return documents || [];
 }
 
 // ==========================================
-// 4. Route handler
+// Route Handler
 // ==========================================
 export async function POST(req: Request) {
   const { messages }: { messages: UIMessage[] } = await req.json();
 
+  // 1. Database se relevant context nikalna
   const results = await retrieveContext(buildSearchQuery(messages));
-  console.log('RAG results:', results); // handy for tuning MIN_SCORE
-
+  
+  // 2. Context format karna LLM ke liye
   const context = results.length
-    ? results.map((r, i) => `[${i + 1}] ${r.text}`).join('\n')
+    ? results.map((r: { content: string }, i: number) => `[${i + 1}] ${r.content}`).join('\n')
     : 'No relevant company information found.';
 
+  // 3. AI Stream generate karna (Tools + DB Context)
   const result = streamText({
-    // TODO: double-check this model name against Google's current docs
     model: google('gemini-3.5-flash'),
     messages: await convertToModelMessages(messages),
     system: `You are Nexus, a helpful AI assistant.
