@@ -1,5 +1,7 @@
 'use client';
 
+import { useState } from 'react';
+
 interface ChatInputProps {
   value: string;
   onChange: (val: string) => void;
@@ -13,11 +15,52 @@ export default function ChatInput({
   onSubmit,
   disabled,
 }: ChatInputProps) {
+  const [isUploading, setIsUploading] = useState(false);
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData,
+      });
+      
+      if (res.ok) {
+        alert(`${file.name} uploaded and processed successfully! Now you can ask questions about it.`);
+      } else {
+        alert("Failed to upload PDF.");
+      }
+    } catch (error) {
+      console.error(error);
+      alert("Error uploading file.");
+    } finally {
+      setIsUploading(false);
+      // Reset the file input so the same file can be selected again
+      e.target.value = '';
+    }
+  };
+
   return (
     <form
       onSubmit={onSubmit}
-      className="flex gap-3 p-4 bg-white border-t border-zinc-100 rounded-b-2xl"
+      className="flex gap-3 p-4 bg-white border-t border-zinc-100 rounded-b-2xl items-center"
     >
+      <label className={`cursor-pointer flex items-center justify-center px-4 py-3 rounded-xl transition-all border ${isUploading || disabled ? 'opacity-50 cursor-not-allowed bg-zinc-100 border-zinc-200 text-zinc-400' : 'bg-zinc-50 border-zinc-200 text-zinc-700 hover:bg-zinc-100'}`}>
+        {isUploading ? '...' : '📄'}
+        <input 
+          type="file" 
+          accept="application/pdf" 
+          className="hidden" 
+          onChange={handleFileUpload} 
+          disabled={isUploading || disabled}
+        />
+      </label>
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
